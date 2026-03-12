@@ -38,6 +38,8 @@ skills/
 
 Top-level `scripts/` directory contains repository maintenance utilities:
 - `scripts/sync-clawhub.sh` - Publish skills to ClawHub/OpenClaw registry
+- `scripts/prepare-skill-artifact.mjs` - Build one releasable skill artifact with vendored local packages
+- `scripts/publish-skill-artifact.mjs` - Publish one prepared skill artifact
 - `scripts/sync-md-to-wechat.sh` - Sync markdown content to WeChat
 
 **Plugin Categories**:
@@ -213,6 +215,8 @@ bash scripts/sync-clawhub.sh <skill>   # sync one skill
 
 Requires `clawhub` CLI or `npx` (auto-downloads via npx if not installed).
 
+Release-time artifact preparation is configured via `.releaserc.yml`. Keep registry/project-specific packaging in hook scripts instead of hardcoding it into generic release instructions.
+
 ## Skill Loading Rules
 
 **IMPORTANT**: When working in this project, follow these rules:
@@ -230,6 +234,8 @@ Requires `clawhub` CLI or `npx` (auto-downloads via npx if not installed).
 ## Release Process
 
 **IMPORTANT**: When user requests release/发布/push, ALWAYS use `/release-skills` workflow.
+
+If `.releaserc.yml` defines `release.hooks.prepare_artifact` / `publish_artifact`, use those hooks to build and publish the final skill artifact.
 
 **Never skip**:
 1. `CHANGELOG.md` + `CHANGELOG.zh.md` - Both must be updated

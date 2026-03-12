@@ -1,9 +1,7 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import process from 'node:process';
 import {
   CdpConnection,
   copyHtmlToClipboard,
@@ -11,7 +9,7 @@ import {
   findChromeExecutable,
   findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
+  launchChrome,
   pasteFromClipboard,
   sleep,
   waitForChromeDebugPort,
@@ -74,36 +72,17 @@ export async function publishArticle(options: ArticleOptions): Promise<void> {
   await mkdir(profileDir, { recursive: true });
 
   // Try reusing an existing Chrome instance with the same profile
-  const existingPort = findExistingChromeDebugPort(profileDir);
+  const existingPort = await findExistingChromeDebugPort(profileDir);
   let port: number;
-  let launched = false;
 
   if (existingPort) {
     console.log(`[weibo-article] Found existing Chrome on port ${existingPort}, reusing...`);
     port = existingPort;
   } else {
-    const chromePath = options.chromePath ?? findChromeExecutable();
+    const chromePath = findChromeExecutable(options.chromePath);
     if (!chromePath) throw new Error('Chrome not found. Set WEIBO_BROWSER_CHROME_PATH env var.');
 
-    port = await getFreePort();
-    console.log(`[weibo-article] Launching Chrome...`);
-    const chromeArgs = [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-blink-features=AutomationControlled',
-      '--start-maximized',
-      WEIBO_ARTICLE_URL,
-    ];
-
-    if (process.platform === 'darwin') {
-      const appPath = chromePath.replace(/\/Contents\/MacOS\/Google Chrome$/, '');
-      spawn('open', ['-na', appPath, '--args', ...chromeArgs], { stdio: 'ignore' });
-    } else {
-      spawn(chromePath, chromeArgs, { stdio: 'ignore' });
-    }
-    launched = true;
+    port = await launchChrome(WEIBO_ARTICLE_URL, profileDir, chromePath);
   }
 
   let cdp: CdpConnection | null = null;

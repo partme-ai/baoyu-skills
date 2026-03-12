@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import process from 'node:process';
@@ -6,9 +5,10 @@ import {
   CHROME_CANDIDATES_FULL,
   CdpConnection,
   copyImageToClipboard,
-  findChromeExecutable,
+  findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
+  launchChrome,
+  openPageSession,
   pasteFromClipboard,
   sleep,
   waitForChromeDebugPort,
@@ -28,22 +28,20 @@ interface XBrowserOptions {
 export async function postToX(options: XBrowserOptions): Promise<void> {
   const { text, images = [], submit = false, timeoutMs = 120_000, profileDir = getDefaultProfileDir() } = options;
 
-  const chromePath = options.chromePath ?? findChromeExecutable(CHROME_CANDIDATES_FULL);
-  if (!chromePath) throw new Error('Chrome not found. Set X_BROWSER_CHROME_PATH env var.');
-
   await mkdir(profileDir, { recursive: true });
 
-  const port = await getFreePort();
-  console.log(`[x-browser] Launching Chrome (profile: ${profileDir})`);
+  const existingPort = await findExistingChromeDebugPort(profileDir);
+  const reusing = existingPort !== null;
+  let port = existingPort ?? 0;
+  let chrome: Awaited<ReturnType<typeof launchChrome>>['chrome'] | null = null;
+  if (!reusing) {
+    const launched = await launchChrome(X_COMPOSE_URL, profileDir, CHROME_CANDIDATES_FULL, options.chromePath);
+    port = launched.port;
+    chrome = launched.chrome;
+  }
 
-  const chrome = spawn(chromePath, [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--start-maximized',
-    X_COMPOSE_URL,
-  ], { stdio: 'ignore' });
+  if (reusing) console.log(`[x-browser] Reusing existing Chrome on port ${port}`);
+  else console.log(`[x-browser] Launching Chrome (profile: ${profileDir})`);
 
   let cdp: CdpConnection | null = null;
 
@@ -51,18 +49,15 @@ export async function postToX(options: XBrowserOptions): Promise<void> {
     const wsUrl = await waitForChromeDebugPort(port, 30_000, { includeLastError: true });
     cdp = await CdpConnection.connect(wsUrl, 30_000, { defaultTimeoutMs: 15_000 });
 
-    const targets = await cdp.send<{ targetInfos: Array<{ targetId: string; url: string; type: string }> }>('Target.getTargets');
-    let pageTarget = targets.targetInfos.find((t) => t.type === 'page' && t.url.includes('x.com'));
-
-    if (!pageTarget) {
-      const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: X_COMPOSE_URL });
-      pageTarget = { targetId, url: X_COMPOSE_URL, type: 'page' };
-    }
-
-    const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: pageTarget.targetId, flatten: true });
-
-    await cdp.send('Page.enable', {}, { sessionId });
-    await cdp.send('Runtime.enable', {}, { sessionId });
+    const page = await openPageSession({
+      cdp,
+      reusing,
+      url: X_COMPOSE_URL,
+      matchTarget: (target) => target.type === 'page' && target.url.includes('x.com'),
+      enablePage: true,
+      enableRuntime: true,
+    });
+    const { sessionId } = page;
     await cdp.send('Input.setIgnoreInputEvents', { ignore: false }, { sessionId });
 
     console.log('[x-browser] Waiting for X editor...');
@@ -192,7 +187,9 @@ export async function postToX(options: XBrowserOptions): Promise<void> {
     if (cdp) {
       cdp.close();
     }
-    chrome.unref();
+    if (chrome) {
+      chrome.unref();
+    }
   }
 }
 

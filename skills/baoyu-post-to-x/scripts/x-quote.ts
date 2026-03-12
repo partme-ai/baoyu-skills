@@ -1,12 +1,13 @@
-import { spawn } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import process from 'node:process';
 import {
   CHROME_CANDIDATES_FULL,
   CdpConnection,
-  findChromeExecutable,
+  findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
+  killChrome,
+  launchChrome,
+  openPageSession,
   sleep,
   waitForChromeDebugPort,
 } from './x-utils.js';
@@ -31,42 +32,39 @@ interface QuoteOptions {
 export async function quotePost(options: QuoteOptions): Promise<void> {
   const { tweetUrl, comment, submit = false, timeoutMs = 120_000, profileDir = getDefaultProfileDir() } = options;
 
-  const chromePath = options.chromePath ?? findChromeExecutable(CHROME_CANDIDATES_FULL);
-  if (!chromePath) throw new Error('Chrome not found. Set X_BROWSER_CHROME_PATH env var.');
-
   await mkdir(profileDir, { recursive: true });
 
-  const port = await getFreePort();
-  console.log(`[x-quote] Launching Chrome (profile: ${profileDir})`);
+  const existingPort = await findExistingChromeDebugPort(profileDir);
+  const reusing = existingPort !== null;
+  let port = existingPort ?? 0;
   console.log(`[x-quote] Opening tweet: ${tweetUrl}`);
+  let chrome: Awaited<ReturnType<typeof launchChrome>>['chrome'] | null = null;
+  if (!reusing) {
+    const launched = await launchChrome(tweetUrl, profileDir, CHROME_CANDIDATES_FULL, options.chromePath);
+    port = launched.port;
+    chrome = launched.chrome;
+  }
 
-  const chrome = spawn(chromePath, [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--start-maximized',
-    tweetUrl,
-  ], { stdio: 'ignore' });
+  if (reusing) console.log(`[x-quote] Reusing existing Chrome on port ${port}`);
+  else console.log(`[x-quote] Launching Chrome (profile: ${profileDir})`);
 
   let cdp: CdpConnection | null = null;
+  let targetId: string | null = null;
 
   try {
     const wsUrl = await waitForChromeDebugPort(port, 30_000, { includeLastError: true });
     cdp = await CdpConnection.connect(wsUrl, 30_000, { defaultTimeoutMs: 15_000 });
 
-    const targets = await cdp.send<{ targetInfos: Array<{ targetId: string; url: string; type: string }> }>('Target.getTargets');
-    let pageTarget = targets.targetInfos.find((t) => t.type === 'page' && t.url.includes('x.com'));
-
-    if (!pageTarget) {
-      const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: tweetUrl });
-      pageTarget = { targetId, url: tweetUrl, type: 'page' };
-    }
-
-    const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: pageTarget.targetId, flatten: true });
-
-    await cdp.send('Page.enable', {}, { sessionId });
-    await cdp.send('Runtime.enable', {}, { sessionId });
+    const page = await openPageSession({
+      cdp,
+      reusing,
+      url: tweetUrl,
+      matchTarget: (target) => target.type === 'page' && target.url.includes('x.com'),
+      enablePage: true,
+      enableRuntime: true,
+    });
+    const { sessionId } = page;
+    targetId = page.targetId;
 
     console.log('[x-quote] Waiting for tweet to load...');
     await sleep(3000);
@@ -175,14 +173,14 @@ export async function quotePost(options: QuoteOptions): Promise<void> {
     }
   } finally {
     if (cdp) {
-      try { await cdp.send('Browser.close', {}, { timeoutMs: 5_000 }); } catch {}
+      if (reusing && targetId) {
+        try { await cdp.send('Target.closeTarget', { targetId }, { timeoutMs: 5_000 }); } catch {}
+      } else if (!reusing) {
+        try { await cdp.send('Browser.close', {}, { timeoutMs: 5_000 }); } catch {}
+      }
       cdp.close();
     }
-
-    setTimeout(() => {
-      if (!chrome.killed) try { chrome.kill('SIGKILL'); } catch {}
-    }, 2_000).unref?.();
-    try { chrome.kill('SIGTERM'); } catch {}
+    if (chrome) killChrome(chrome);
   }
 }
 

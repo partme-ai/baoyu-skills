@@ -1,9 +1,6 @@
-import { spawn } from 'node:child_process';
-import fs from 'node:fs';
 import { mkdir, writeFile } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import process from 'node:process';
 
 import { parseMarkdown } from './md-to-html.js';
 import {
@@ -11,9 +8,10 @@ import {
   CdpConnection,
   copyHtmlToClipboard,
   copyImageToClipboard,
-  findChromeExecutable,
+  findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
+  launchChrome,
+  openPageSession,
   pasteFromClipboard,
   sleep,
   waitForChromeDebugPort,
@@ -61,25 +59,6 @@ interface ArticleOptions {
   chromePath?: string;
 }
 
-async function findExistingDebugPort(profileDir: string): Promise<number | null> {
-  const portFile = path.join(profileDir, 'DevToolsActivePort');
-  if (!fs.existsSync(portFile)) return null;
-
-  try {
-    const content = fs.readFileSync(portFile, 'utf-8').trim();
-    if (!content) return null;
-    const [portLine] = content.split(/\r?\n/);
-    const port = Number(portLine);
-    if (!Number.isFinite(port) || port <= 0) return null;
-
-    // Verify the port is actually active.
-    await waitForChromeDebugPort(port, 1500, { includeLastError: true });
-    return port;
-  } catch {
-    return null;
-  }
-}
-
 export async function publishArticle(options: ArticleOptions): Promise<void> {
   const { markdownPath, submit = false, profileDir = getDefaultProfileDir() } = options;
 
@@ -98,31 +77,17 @@ export async function publishArticle(options: ArticleOptions): Promise<void> {
   await writeFile(htmlPath, parsed.html, 'utf-8');
   console.log(`[x-article] HTML saved to: ${htmlPath}`);
 
-  const chromePath = options.chromePath ?? findChromeExecutable(CHROME_CANDIDATES_BASIC);
-  if (!chromePath) throw new Error('Chrome not found');
-
   await mkdir(profileDir, { recursive: true });
-  const existingPort = await findExistingDebugPort(profileDir);
-  const port = existingPort ?? await getFreePort();
+  const existingPort = await findExistingChromeDebugPort(profileDir);
+  const reusing = existingPort !== null;
+  let port = existingPort ?? 0;
 
-  if (existingPort) {
+  if (reusing) {
     console.log(`[x-article] Reusing existing Chrome instance on port ${port}`);
   } else {
     console.log(`[x-article] Launching Chrome...`);
-    const chromeArgs = [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--start-maximized',
-      X_ARTICLES_URL,
-    ];
-    if (process.platform === 'darwin') {
-      const appPath = chromePath.replace(/\/Contents\/MacOS\/Google Chrome$/, '');
-      spawn('open', ['-na', appPath, '--args', ...chromeArgs], { stdio: 'ignore' });
-    } else {
-      spawn(chromePath, chromeArgs, { stdio: 'ignore' });
-    }
+    const launched = await launchChrome(X_ARTICLES_URL, profileDir, CHROME_CANDIDATES_BASIC, options.chromePath);
+    port = launched.port;
   }
 
   let cdp: CdpConnection | null = null;
@@ -131,20 +96,16 @@ export async function publishArticle(options: ArticleOptions): Promise<void> {
     const wsUrl = await waitForChromeDebugPort(port, 30_000, { includeLastError: true });
     cdp = await CdpConnection.connect(wsUrl, 30_000, { defaultTimeoutMs: 60_000 });
 
-    // Get page target
-    const targets = await cdp.send<{ targetInfos: Array<{ targetId: string; url: string; type: string }> }>('Target.getTargets');
-    let pageTarget = targets.targetInfos.find((t) => t.type === 'page' && t.url.startsWith(X_ARTICLES_URL));
-
-    if (!pageTarget) {
-      const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: X_ARTICLES_URL });
-      pageTarget = { targetId, url: X_ARTICLES_URL, type: 'page' };
-    }
-
-    const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: pageTarget.targetId, flatten: true });
-
-    await cdp.send('Page.enable', {}, { sessionId });
-    await cdp.send('Runtime.enable', {}, { sessionId });
-    await cdp.send('DOM.enable', {}, { sessionId });
+    const page = await openPageSession({
+      cdp,
+      reusing,
+      url: X_ARTICLES_URL,
+      matchTarget: (target) => target.type === 'page' && target.url.startsWith(X_ARTICLES_URL),
+      enablePage: true,
+      enableRuntime: true,
+      enableDom: true,
+    });
+    const { sessionId } = page;
 
     console.log('[x-article] Waiting for articles page...');
     await sleep(1000);

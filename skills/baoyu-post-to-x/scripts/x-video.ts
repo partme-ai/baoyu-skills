@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -6,9 +5,11 @@ import process from 'node:process';
 import {
   CHROME_CANDIDATES_FULL,
   CdpConnection,
-  findChromeExecutable,
+  findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
+  killChrome,
+  launchChrome,
+  openPageSession,
   sleep,
   waitForChromeDebugPort,
 } from './x-utils.js';
@@ -27,9 +28,6 @@ interface XVideoOptions {
 export async function postVideoToX(options: XVideoOptions): Promise<void> {
   const { text, videoPath, submit = false, timeoutMs = 120_000, profileDir = getDefaultProfileDir() } = options;
 
-  const chromePath = options.chromePath ?? findChromeExecutable(CHROME_CANDIDATES_FULL);
-  if (!chromePath) throw new Error('Chrome not found. Set X_BROWSER_CHROME_PATH env var.');
-
   if (!fs.existsSync(videoPath)) throw new Error(`Video not found: ${videoPath}`);
 
   const absVideoPath = path.resolve(videoPath);
@@ -37,37 +35,37 @@ export async function postVideoToX(options: XVideoOptions): Promise<void> {
 
   await mkdir(profileDir, { recursive: true });
 
-  const port = await getFreePort();
-  console.log(`[x-video] Launching Chrome (profile: ${profileDir})`);
+  const existingPort = await findExistingChromeDebugPort(profileDir);
+  const reusing = existingPort !== null;
+  let port = existingPort ?? 0;
+  let chrome: Awaited<ReturnType<typeof launchChrome>>['chrome'] | null = null;
+  if (!reusing) {
+    const launched = await launchChrome(X_COMPOSE_URL, profileDir, CHROME_CANDIDATES_FULL, options.chromePath);
+    port = launched.port;
+    chrome = launched.chrome;
+  }
 
-  const chrome = spawn(chromePath, [
-    `--remote-debugging-port=${port}`,
-    `--user-data-dir=${profileDir}`,
-    '--no-first-run',
-    '--no-default-browser-check',
-    '--start-maximized',
-    X_COMPOSE_URL,
-  ], { stdio: 'ignore' });
+  if (reusing) console.log(`[x-video] Reusing existing Chrome on port ${port}`);
+  else console.log(`[x-video] Launching Chrome (profile: ${profileDir})`);
 
   let cdp: CdpConnection | null = null;
+  let targetId: string | null = null;
 
   try {
     const wsUrl = await waitForChromeDebugPort(port, 30_000, { includeLastError: true });
     cdp = await CdpConnection.connect(wsUrl, 30_000, { defaultTimeoutMs: 30_000 });
 
-    const targets = await cdp.send<{ targetInfos: Array<{ targetId: string; url: string; type: string }> }>('Target.getTargets');
-    let pageTarget = targets.targetInfos.find((t) => t.type === 'page' && t.url.includes('x.com'));
-
-    if (!pageTarget) {
-      const { targetId } = await cdp.send<{ targetId: string }>('Target.createTarget', { url: X_COMPOSE_URL });
-      pageTarget = { targetId, url: X_COMPOSE_URL, type: 'page' };
-    }
-
-    const { sessionId } = await cdp.send<{ sessionId: string }>('Target.attachToTarget', { targetId: pageTarget.targetId, flatten: true });
-
-    await cdp.send('Page.enable', {}, { sessionId });
-    await cdp.send('Runtime.enable', {}, { sessionId });
-    await cdp.send('DOM.enable', {}, { sessionId });
+    const page = await openPageSession({
+      cdp,
+      reusing,
+      url: X_COMPOSE_URL,
+      matchTarget: (target) => target.type === 'page' && target.url.includes('x.com'),
+      enablePage: true,
+      enableRuntime: true,
+      enableDom: true,
+    });
+    const { sessionId } = page;
+    targetId = page.targetId;
     await cdp.send('Input.setIgnoreInputEvents', { ignore: false }, { sessionId });
 
     console.log('[x-video] Waiting for X editor...');
@@ -182,15 +180,12 @@ export async function postVideoToX(options: XVideoOptions): Promise<void> {
     }
   } finally {
     if (cdp) {
+      if (reusing && submit && targetId) {
+        try { await cdp.send('Target.closeTarget', { targetId }, { timeoutMs: 5_000 }); } catch {}
+      }
       cdp.close();
     }
-    // Don't kill Chrome in preview mode, let user review
-    if (submit) {
-      setTimeout(() => {
-        if (!chrome.killed) try { chrome.kill('SIGKILL'); } catch {}
-      }, 2_000).unref?.();
-      try { chrome.kill('SIGTERM'); } catch {}
-    }
+    if (chrome && submit) killChrome(chrome);
   }
 }
 

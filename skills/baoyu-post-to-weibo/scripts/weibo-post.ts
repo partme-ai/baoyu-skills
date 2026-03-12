@@ -1,4 +1,3 @@
-import { spawn } from 'node:child_process';
 import fs from 'node:fs';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
@@ -8,8 +7,8 @@ import {
   findChromeExecutable,
   findExistingChromeDebugPort,
   getDefaultProfileDir,
-  getFreePort,
   killChromeByProfile,
+  launchChrome as launchWeiboChrome,
   sleep,
   waitForChromeDebugPort,
 } from './weibo-utils.js';
@@ -37,32 +36,11 @@ export async function postToWeibo(options: WeiboPostOptions): Promise<void> {
 
   await mkdir(profileDir, { recursive: true });
 
-  const chromePath = options.chromePath ?? findChromeExecutable();
+  const chromePath = findChromeExecutable(options.chromePath);
   if (!chromePath) throw new Error('Chrome not found. Set WEIBO_BROWSER_CHROME_PATH env var.');
 
-  const launchChrome = async (): Promise<number> => {
-    const port = await getFreePort();
-    console.log(`[weibo-post] Launching Chrome (profile: ${profileDir})`);
-    const chromeArgs = [
-      `--remote-debugging-port=${port}`,
-      `--user-data-dir=${profileDir}`,
-      '--no-first-run',
-      '--no-default-browser-check',
-      '--disable-blink-features=AutomationControlled',
-      '--start-maximized',
-      WEIBO_HOME_URL,
-    ];
-    if (process.platform === 'darwin') {
-      const appPath = chromePath.replace(/\/Contents\/MacOS\/Google Chrome$/, '');
-      spawn('open', ['-na', appPath, '--args', ...chromeArgs], { stdio: 'ignore' });
-    } else {
-      spawn(chromePath, chromeArgs, { stdio: 'ignore' });
-    }
-    return port;
-  };
-
   let port: number;
-  const existingPort = findExistingChromeDebugPort(profileDir);
+  const existingPort = await findExistingChromeDebugPort(profileDir);
 
   if (existingPort) {
     console.log(`[weibo-post] Found existing Chrome on port ${existingPort}, checking health...`);
@@ -77,10 +55,10 @@ export async function postToWeibo(options: WeiboPostOptions): Promise<void> {
       console.log('[weibo-post] Existing Chrome unresponsive, restarting...');
       killChromeByProfile(profileDir);
       await sleep(2000);
-      port = await launchChrome();
+      port = await launchWeiboChrome(WEIBO_HOME_URL, profileDir, chromePath);
     }
   } else {
-    port = await launchChrome();
+    port = await launchWeiboChrome(WEIBO_HOME_URL, profileDir, chromePath);
   }
 
   let cdp: CdpConnection | null = null;
