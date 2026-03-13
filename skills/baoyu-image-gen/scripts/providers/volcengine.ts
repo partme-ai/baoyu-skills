@@ -134,10 +134,10 @@ function normalizeSize(size: string): string {
 }
 
 /**
- * 火山方舟图片生成 API 响应（OpenAI 兼容格式）
+ * 火山方舟图片生成 API 响应（OpenAI 兼容格式；data[].size 为实际输出尺寸如 "3104x1312"）
  */
 type VolcengineImageResponse = {
-  data?: Array<{ url?: string; b64_json?: string }>;
+  data?: Array<{ url?: string; b64_json?: string; size?: string }>;
 };
 
 /**
@@ -167,9 +167,14 @@ export async function generateImage(
     );
   }
 
+  // 与官方调用示例一致：未指定 --size 且未指定 --ar 时使用分辨率预设（2K/像素默认）；否则用像素尺寸
   const size = args.size
     ? normalizeSize(args.size)
-    : getSizeFromAspectRatio(args.aspectRatio, args.quality);
+    : args.aspectRatio
+      ? getSizeFromAspectRatio(args.aspectRatio, args.quality)
+      : args.quality === "2k"
+        ? "2K"
+        : "2048x2048";
 
   const baseUrl = getBaseUrl();
   const url = `${baseUrl}/images/generations`;
@@ -179,6 +184,8 @@ export async function generateImage(
     prompt,
     size,
     n: args.n ?? 1,
+    output_format: "png" as const,
+    watermark: false,
   };
 
   console.log(`Generating image with Volcengine (${model})...`, { size });

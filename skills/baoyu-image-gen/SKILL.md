@@ -86,7 +86,7 @@ ${BUN_X} {baseDir}/scripts/main.ts --prompt "A cat" --image out.png --provider o
 # DashScope (阿里通义万象)
 ${BUN_X} {baseDir}/scripts/main.ts --prompt "一只可爱的猫" --image out.png --provider dashscope
 
-# Volcengine / 火山方舟 Seedream（需配置 VOLC_API_KEY 或 ARK_API_KEY，model 为接入点 ID ep-xxx）
+# Volcengine / 火山方舟 Seedream（需配置 VOLC_API_KEY 或 ARK_API_KEY；国内可设 ARK_BASE_URL=https://ark.cn-beijing.volces.com/api/v3）
 ${BUN_X} {baseDir}/scripts/main.ts --prompt "一只可爱的猫" --image out.png --provider volcengine
 ${BUN_X} {baseDir}/scripts/main.ts --prompt "A cat" --image out.png --provider volcengine --model ep-xxx
 
@@ -167,7 +167,7 @@ Paths in `promptFiles`, `image`, and `ref` are resolved relative to the batch fi
 | `GOOGLE_BASE_URL` | Custom Google endpoint |
 | `DASHSCOPE_BASE_URL` | Custom DashScope endpoint |
 | `REPLICATE_BASE_URL` | Custom Replicate endpoint |
-| `VOLC_BASE_URL` / `ARK_BASE_URL` | Custom Volcengine/Ark endpoint (default: https://api.ark.volcengine.com/api/v3) |
+| `VOLC_BASE_URL` / `ARK_BASE_URL` | Custom Volcengine/Ark endpoint (default: https://api.ark.volcengine.com/api/v3). 国内可用 `https://ark.cn-beijing.volces.com/api/v3` |
 | `BAOYU_IMAGE_GEN_MAX_WORKERS` | Override batch worker cap |
 | `BAOYU_IMAGE_GEN_<PROVIDER>_CONCURRENCY` | Override provider concurrency, e.g. `BAOYU_IMAGE_GEN_REPLICATE_CONCURRENCY` |
 | `BAOYU_IMAGE_GEN_<PROVIDER>_START_INTERVAL_MS` | Override provider start gap, e.g. `BAOYU_IMAGE_GEN_REPLICATE_START_INTERVAL_MS` |
