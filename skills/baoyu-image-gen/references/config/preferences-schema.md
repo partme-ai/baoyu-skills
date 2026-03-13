@@ -11,7 +11,7 @@ description: EXTEND.md YAML schema for baoyu-image-gen user preferences
 ---
 version: 1
 
-default_provider: null      # google|openai|dashscope|replicate|null (null = auto-detect)
+default_provider: null      # google|openai|dashscope|replicate|volcengine|null (null = auto-detect)
 
 default_quality: null       # normal|2k|null (null = use default: 2k)
 
@@ -24,6 +24,7 @@ default_model:
   openai: null              # e.g., "gpt-image-1.5", "gpt-image-1"
   dashscope: null           # e.g., "z-image-turbo"
   replicate: null           # e.g., "google/nano-banana-pro"
+  volcengine: null          # e.g., "doubao-seedream-5-0-260128" (火山方舟 Seedream 接入点 ID)
 
 batch:
   max_workers: 10
@@ -38,6 +39,9 @@ batch:
       concurrency: 3
       start_interval_ms: 1100
     dashscope:
+      concurrency: 3
+      start_interval_ms: 1100
+    volcengine:
       concurrency: 3
       start_interval_ms: 1100
 ---
@@ -56,6 +60,7 @@ batch:
 | `default_model.openai` | string\|null | null | OpenAI default model |
 | `default_model.dashscope` | string\|null | null | DashScope default model |
 | `default_model.replicate` | string\|null | null | Replicate default model |
+| `default_model.volcengine` | string\|null | null | Volcengine/Ark default model (e.g. ep-xxx endpoint ID) |
 | `batch.max_workers` | int\|null | 10 | Batch worker cap |
 | `batch.provider_limits.<provider>.concurrency` | int\|null | provider default | Max simultaneous requests per provider |
 | `batch.provider_limits.<provider>.start_interval_ms` | int\|null | provider default | Minimum gap between request starts per provider |
@@ -84,11 +89,15 @@ default_model:
   openai: "gpt-image-1.5"
   dashscope: "z-image-turbo"
   replicate: "google/nano-banana-pro"
+  volcengine: "doubao-seedream-5-0-260128"
 batch:
   max_workers: 10
   provider_limits:
     replicate:
       concurrency: 5
       start_interval_ms: 700
+    volcengine:
+      concurrency: 3
+      start_interval_ms: 1100
 ---
 ```

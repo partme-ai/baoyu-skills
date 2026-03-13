@@ -1,6 +1,6 @@
 ---
 name: baoyu-image-gen
-description: AI image generation with OpenAI, Google, DashScope and Replicate APIs. Supports text-to-image, reference images, aspect ratios, and batch generation from saved prompt files. Sequential by default; use batch parallel generation when the user already has multiple prompts or wants stable multi-image throughput. Use when user asks to generate, create, or draw images.
+description: AI image generation with OpenAI, Google, DashScope, Replicate and Volcengine (火山方舟 Seedream) APIs. Supports text-to-image, reference images, aspect ratios, and batch generation from saved prompt files. Sequential by default; use batch parallel generation when the user already has multiple prompts or wants stable multi-image throughput. Use when user asks to generate, create, or draw images.
 version: 1.56.1
 metadata:
   openclaw:
@@ -13,7 +13,7 @@ metadata:
 
 # Image Generation (AI SDK)
 
-Official API-based image generation. Supports OpenAI, Google, DashScope (阿里通义万象) and Replicate providers.
+Official API-based image generation. Supports OpenAI, Google, DashScope (阿里通义万象), Replicate and Volcengine (火山方舟 Seedream) providers.
 
 ## Script Directory
 
@@ -86,6 +86,10 @@ ${BUN_X} {baseDir}/scripts/main.ts --prompt "A cat" --image out.png --provider o
 # DashScope (阿里通义万象)
 ${BUN_X} {baseDir}/scripts/main.ts --prompt "一只可爱的猫" --image out.png --provider dashscope
 
+# Volcengine / 火山方舟 Seedream（需配置 VOLC_API_KEY 或 ARK_API_KEY，model 为接入点 ID ep-xxx）
+${BUN_X} {baseDir}/scripts/main.ts --prompt "一只可爱的猫" --image out.png --provider volcengine
+${BUN_X} {baseDir}/scripts/main.ts --prompt "A cat" --image out.png --provider volcengine --model ep-xxx
+
 # Replicate (google/nano-banana-pro)
 ${BUN_X} {baseDir}/scripts/main.ts --prompt "A cat" --image out.png --provider replicate
 
@@ -135,8 +139,8 @@ Paths in `promptFiles`, `image`, and `ref` are resolved relative to the batch fi
 | `--image <path>` | Output image path (required in single-image mode) |
 | `--batchfile <path>` | JSON batch file for multi-image generation |
 | `--jobs <count>` | Worker count for batch mode (default: auto, max from config, built-in default 10) |
-| `--provider google\|openai\|dashscope\|replicate` | Force provider (default: auto-detect) |
-| `--model <id>`, `-m` | Model ID (Google: `gemini-3-pro-image-preview`, `gemini-3.1-flash-image-preview`; OpenAI: `gpt-image-1.5`, `gpt-image-1`) |
+| `--provider google\|openai\|dashscope\|replicate\|volcengine` | Force provider (default: auto-detect) |
+| `--model <id>`, `-m` | Model ID (Google: …; OpenAI: …; DashScope: …; Volcengine: 方舟接入点 ID `ep-xxx` 或 `doubao-seedream-5-0-260128` 等) |
 | `--ar <ratio>` | Aspect ratio (e.g., `16:9`, `1:1`, `4:3`) |
 | `--size <WxH>` | Size (e.g., `1024x1024`) |
 | `--quality normal\|2k` | Quality preset (default: `2k`) |
@@ -153,14 +157,17 @@ Paths in `promptFiles`, `image`, and `ref` are resolved relative to the batch fi
 | `GOOGLE_API_KEY` | Google API key |
 | `DASHSCOPE_API_KEY` | DashScope API key (阿里云) |
 | `REPLICATE_API_TOKEN` | Replicate API token |
+| `VOLC_API_KEY` / `ARK_API_KEY` | Volcengine/火山方舟 API key |
 | `OPENAI_IMAGE_MODEL` | OpenAI model override |
 | `GOOGLE_IMAGE_MODEL` | Google model override |
 | `DASHSCOPE_IMAGE_MODEL` | DashScope model override (default: z-image-turbo) |
 | `REPLICATE_IMAGE_MODEL` | Replicate model override (default: google/nano-banana-pro) |
+| `VOLC_IMAGE_MODEL` / `ARK_IMAGE_MODEL` | Volcengine default model (方舟接入点 ID ep-xxx) |
 | `OPENAI_BASE_URL` | Custom OpenAI endpoint |
 | `GOOGLE_BASE_URL` | Custom Google endpoint |
 | `DASHSCOPE_BASE_URL` | Custom DashScope endpoint |
 | `REPLICATE_BASE_URL` | Custom Replicate endpoint |
+| `VOLC_BASE_URL` / `ARK_BASE_URL` | Custom Volcengine/Ark endpoint (default: https://api.ark.volcengine.com/api/v3) |
 | `BAOYU_IMAGE_GEN_MAX_WORKERS` | Override batch worker cap |
 | `BAOYU_IMAGE_GEN_<PROVIDER>_CONCURRENCY` | Override provider concurrency, e.g. `BAOYU_IMAGE_GEN_REPLICATE_CONCURRENCY` |
 | `BAOYU_IMAGE_GEN_<PROVIDER>_START_INTERVAL_MS` | Override provider start gap, e.g. `BAOYU_IMAGE_GEN_REPLICATE_START_INTERVAL_MS` |
@@ -222,6 +229,7 @@ Supported: `1:1`, `16:9`, `9:16`, `4:3`, `3:4`, `2.35:1`
 - Google multimodal: uses `imageConfig.aspectRatio`
 - OpenAI: maps to closest supported size
 - Replicate: passes `aspect_ratio` to model; when `--ref` is provided without `--ar`, defaults to `match_input_image`
+- Volcengine: maps to Seedream supported sizes (e.g. 2048x2048, 2304x1728, 2560x1440)
 
 ## Generation Mode
 

@@ -54,6 +54,7 @@ const DEFAULT_PROVIDER_RATE_LIMITS: Record<Provider, ProviderRateLimit> = {
   google: { concurrency: 3, startIntervalMs: 1100 },
   openai: { concurrency: 3, startIntervalMs: 1100 },
   dashscope: { concurrency: 3, startIntervalMs: 1100 },
+  volcengine: { concurrency: 3, startIntervalMs: 1100 },
 };
 
 function printUsage(): void {
@@ -68,7 +69,7 @@ Options:
   --image <path>            Output image path (required in single-image mode)
   --batchfile <path>        JSON batch file for multi-image generation
   --jobs <count>            Worker count for batch mode (default: auto, max from config, built-in default 10)
-  --provider google|openai|dashscope|replicate  Force provider (auto-detect by default)
+  --provider google|openai|dashscope|replicate|volcengine  Force provider (auto-detect by default)
   -m, --model <id>          Model ID
   --ar <ratio>              Aspect ratio (e.g., 16:9, 1:1, 4:3)
   --size <WxH>              Size (e.g., 1024x1024)
@@ -105,15 +106,18 @@ Environment variables:
   GEMINI_API_KEY            Gemini API key (alias for GOOGLE_API_KEY)
   DASHSCOPE_API_KEY         DashScope API key
   REPLICATE_API_TOKEN       Replicate API token
+  VOLC_API_KEY              Volcengine/Ark API key (or ARK_API_KEY)
   OPENAI_IMAGE_MODEL        Default OpenAI model (gpt-image-1.5)
   GOOGLE_IMAGE_MODEL        Default Google model (gemini-3-pro-image-preview)
   DASHSCOPE_IMAGE_MODEL     Default DashScope model (z-image-turbo)
   REPLICATE_IMAGE_MODEL     Default Replicate model (google/nano-banana-pro)
+  VOLC_IMAGE_MODEL          Default Volcengine model (ep-xxx endpoint ID, or ARK_IMAGE_MODEL)
   OPENAI_BASE_URL           Custom OpenAI endpoint
   OPENAI_IMAGE_USE_CHAT     Use /chat/completions instead of /images/generations (true|false)
   GOOGLE_BASE_URL           Custom Google endpoint
   DASHSCOPE_BASE_URL        Custom DashScope endpoint
   REPLICATE_BASE_URL        Custom Replicate endpoint
+  VOLC_BASE_URL             Custom Volcengine/Ark endpoint (or ARK_BASE_URL)
   BAOYU_IMAGE_GEN_MAX_WORKERS  Override batch worker cap
   BAOYU_IMAGE_GEN_<PROVIDER>_CONCURRENCY  Override provider concurrency
   BAOYU_IMAGE_GEN_<PROVIDER>_START_INTERVAL_MS  Override provider start gap in ms
@@ -206,7 +210,7 @@ function parseArgs(argv: string[]): CliArgs {
 
     if (a === "--provider") {
       const v = argv[++i];
-      if (v !== "google" && v !== "openai" && v !== "dashscope" && v !== "replicate") {
+      if (v !== "google" && v !== "openai" && v !== "dashscope" && v !== "replicate" && v !== "volcengine") {
         throw new Error(`Invalid provider: ${v}`);
       }
       out.provider = v;
@@ -352,7 +356,7 @@ function parseSimpleYaml(yaml: string): Partial<ExtendConfig> {
       } else if (key === "default_image_size") {
         config.default_image_size = value === "null" ? null : value as "1K" | "2K" | "4K";
       } else if (key === "default_model") {
-        config.default_model = { google: null, openai: null, dashscope: null, replicate: null };
+        config.default_model = { google: null, openai: null, dashscope: null, replicate: null, volcengine: null };
         currentKey = "default_model";
         currentProvider = null;
       } else if (key === "batch") {
@@ -370,7 +374,7 @@ function parseSimpleYaml(yaml: string): Partial<ExtendConfig> {
       } else if (
         currentKey === "provider_limits" &&
         indent >= 4 &&
-        (key === "google" || key === "openai" || key === "dashscope" || key === "replicate")
+        (key === "google" || key === "openai" || key === "dashscope" || key === "replicate" || key === "volcengine")
       ) {
         config.batch ??= {};
         config.batch.provider_limits ??= {};
@@ -378,7 +382,7 @@ function parseSimpleYaml(yaml: string): Partial<ExtendConfig> {
         currentProvider = key;
       } else if (
         currentKey === "default_model" &&
-        (key === "google" || key === "openai" || key === "dashscope" || key === "replicate")
+        (key === "google" || key === "openai" || key === "dashscope" || key === "replicate" || key === "volcengine")
       ) {
         const cleaned = value.replace(/['"]/g, "");
         config.default_model![key] = cleaned === "null" ? null : cleaned;
@@ -467,9 +471,10 @@ function getConfiguredProviderRateLimits(
     google: { ...DEFAULT_PROVIDER_RATE_LIMITS.google },
     openai: { ...DEFAULT_PROVIDER_RATE_LIMITS.openai },
     dashscope: { ...DEFAULT_PROVIDER_RATE_LIMITS.dashscope },
+    volcengine: { ...DEFAULT_PROVIDER_RATE_LIMITS.volcengine },
   };
 
-  for (const provider of ["replicate", "google", "openai", "dashscope"] as Provider[]) {
+  for (const provider of ["replicate", "google", "openai", "dashscope", "volcengine"] as Provider[]) {
     const envPrefix = `BAOYU_IMAGE_GEN_${provider.toUpperCase()}`;
     const extendLimit = extendConfig.batch?.provider_limits?.[provider];
     configured[provider] = {
@@ -535,6 +540,7 @@ function detectProvider(args: CliArgs): Provider {
   const hasOpenai = !!process.env.OPENAI_API_KEY;
   const hasDashscope = !!process.env.DASHSCOPE_API_KEY;
   const hasReplicate = !!process.env.REPLICATE_API_TOKEN;
+  const hasVolcengine = !!(process.env.VOLC_API_KEY || process.env.ARK_API_KEY);
 
   if (args.referenceImages.length > 0) {
     if (hasGoogle) return "google";
@@ -550,13 +556,14 @@ function detectProvider(args: CliArgs): Provider {
     hasOpenai && "openai",
     hasDashscope && "dashscope",
     hasReplicate && "replicate",
+    hasVolcengine && "volcengine",
   ].filter(Boolean) as Provider[];
 
   if (available.length === 1) return available[0]!;
   if (available.length > 1) return available[0]!;
 
   throw new Error(
-    "No API key found. Set GOOGLE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DASHSCOPE_API_KEY, or REPLICATE_API_TOKEN.\n" +
+    "No API key found. Set GOOGLE_API_KEY, GEMINI_API_KEY, OPENAI_API_KEY, DASHSCOPE_API_KEY, REPLICATE_API_TOKEN, or VOLC_API_KEY/ARK_API_KEY.\n" +
       "Create ~/.baoyu-skills/.env or <cwd>/.baoyu-skills/.env with your keys."
   );
 }
@@ -596,6 +603,7 @@ async function loadProviderModule(provider: Provider): Promise<ProviderModule> {
   if (provider === "google") return (await import("./providers/google")) as ProviderModule;
   if (provider === "dashscope") return (await import("./providers/dashscope")) as ProviderModule;
   if (provider === "replicate") return (await import("./providers/replicate")) as ProviderModule;
+  if (provider === "volcengine") return (await import("./providers/volcengine")) as ProviderModule;
   return (await import("./providers/openai")) as ProviderModule;
 }
 
@@ -619,6 +627,7 @@ function getModelForProvider(
     if (provider === "openai" && extendConfig.default_model.openai) return extendConfig.default_model.openai;
     if (provider === "dashscope" && extendConfig.default_model.dashscope) return extendConfig.default_model.dashscope;
     if (provider === "replicate" && extendConfig.default_model.replicate) return extendConfig.default_model.replicate;
+    if (provider === "volcengine" && extendConfig.default_model.volcengine) return extendConfig.default_model.volcengine;
   }
   return providerModule.getDefaultModel();
 }
@@ -834,7 +843,7 @@ async function runBatchTasks(
   const acquireProvider = createProviderGate(providerRateLimits);
   const workerCount = getWorkerCount(tasks.length, jobs, maxWorkers);
   console.error(`Batch mode: ${tasks.length} tasks, ${workerCount} workers, parallel mode enabled.`);
-  for (const provider of ["replicate", "google", "openai", "dashscope"] as Provider[]) {
+  for (const provider of ["replicate", "google", "openai", "dashscope", "volcengine"] as Provider[]) {
     const limit = providerRateLimits[provider];
     console.error(`- ${provider}: concurrency=${limit.concurrency}, startIntervalMs=${limit.startIntervalMs}`);
   }

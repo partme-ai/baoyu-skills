@@ -1,4 +1,4 @@
-export type Provider = "google" | "openai" | "dashscope" | "replicate";
+export type Provider = "google" | "openai" | "dashscope" | "replicate" | "volcengine";
 export type Quality = "normal" | "2k";
 
 export type CliArgs = {
@@ -52,6 +52,7 @@ export type ExtendConfig = {
     openai: string | null;
     dashscope: string | null;
     replicate: string | null;
+    volcengine: string | null;
   };
   batch?: {
     max_workers?: number | null;
